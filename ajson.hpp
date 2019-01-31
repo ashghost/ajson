@@ -26,12 +26,14 @@ DEALINGS IN THE SOFTWARE.
 #include <deque>
 #include <list>
 #include <map>
+#include <set>
 #include <memory>
 #include <queue>
 #include <string>
 #include <type_traits>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <ios>
 
 #define STRINGFY_LIST(...) #__VA_ARGS__
@@ -85,7 +87,7 @@ namespace ajson
     {
       if (c > ' ' || c <= 0)
         return false;
-      return char_table()[c] == 17;
+      return char_table()[static_cast<unsigned char>(c)] == 17;
     }
 
     inline char const * skip_ws(char const * str)
@@ -162,6 +164,19 @@ namespace ajson
       is_template_instant_of<std::deque, T>::value ||
       is_template_instant_of<std::list, T>::value ||
       is_template_instant_of<std::vector, T>::value
+    > {};
+
+    template< class T >
+    struct is_set_container : std::integral_constant < bool,
+      is_template_instant_of<std::set, T>::value ||
+      is_template_instant_of<std::unordered_set, T>::value
+    > {};
+
+    template< class T >
+    struct is_ptr : std::integral_constant < bool,
+      std::is_pointer<T>::value ||
+      is_template_instant_of<std::shared_ptr, T>::value ||
+      is_template_instant_of<std::unique_ptr, T>::value
     > {};
   }
 
@@ -525,7 +540,7 @@ namespace ajson
     }
   public:
     reader(const char * ptr = nullptr, size_t len = -1)
-      :ptr_(ptr), len_(len)
+      :len_(len),ptr_(ptr)
     {
       if (ptr == nullptr)
       {
@@ -696,8 +711,8 @@ namespace ajson
     char * m_read_ptr;
     char * m_write_ptr;
     char * m_tail_ptr;
-    int							m_status;
     std::size_t			m_length;
+    int							m_status;
 
     enum{ INIT_BUFF_SIZE = 1024 };
     ajson_string_stream() :m_length(INIT_BUFF_SIZE), m_status(good)
@@ -1324,14 +1339,14 @@ namespace ajson
     static inline void write(write_ty& wt, ty const& val)
     {
       typedef typename std::underlying_type<ty>::type raw_type;
-      json_impl<raw_type>::write(wt, val);
+      json_impl<raw_type>::write(wt, (const raw_type&)val);
     }
 
     template<typename write_ty>
     static inline void write_key(write_ty& wt, ty const& val)
     {
       typedef typename std::underlying_type<ty>::type raw_type;
-      json_impl<raw_type>::write_key(wt, val);
+      json_impl<raw_type>::write_key(wt, (const raw_type&)val);
     }
   };
 
@@ -1407,7 +1422,7 @@ namespace ajson
   {
     if (v>=0 && v <= 'f')
     {
-      v = detail::char_table()[v];
+      v = detail::char_table()[static_cast<unsigned char>(v)];
     }
     else
     {
@@ -1555,7 +1570,7 @@ namespace ajson
     } while (len > 0);
     return true;
   }
-  
+
   template<typename ty>
   struct json_impl < ty,
     typename std::enable_if <detail::is_stdstring<ty>::value>::type >
@@ -1650,7 +1665,7 @@ namespace ajson
   };
 
   template<typename T>
-  inline void array_read(reader& rd, T * val, int N)
+  inline void array_read(reader& rd, T * val, size_t N)
   {
     if (rd.expect('[') == false)
     {
@@ -1691,14 +1706,14 @@ namespace ajson
   }
 
   template<typename T, typename write_ty>
-  inline void array_write(write_ty& wt, const T * val, int N)
+  inline void array_write(write_ty& wt, const T * val, size_t N)
   {
     wt.put('[');
-    int last = N - 1;
-    for (int i = 0; i < N; ++i)
+    auto sz = val.size();
+    for (size_t i = 0; i < N; ++i)
     {
       json_impl<T>::write(wt, val[i]);
-      if (i < last)
+      if (sz-- > 1)
         wt.put(',');
     }
     wt.put(']');
@@ -1729,6 +1744,23 @@ namespace ajson
     static inline void write(write_ty& wt, const T * val)
     {
       array_write(wt, val, N);
+    }
+  };
+
+  template<typename T, size_t N>
+  struct json_impl <std::array<T, N>>
+  {
+    using Ty = std::array<T, N>;
+
+    static inline void read(reader& rd, Ty& val)
+    {
+      array_read(rd, val.data(), N);
+    }
+
+    template<typename write_ty>
+    static inline void write(write_ty& wt, const Ty& val)
+    {
+      array_write(wt, val.data(), N);
     }
   };
 
@@ -1856,6 +1888,127 @@ namespace ajson
     }
   };
 
+  template<typename ty>
+  struct json_impl < ty,
+    typename std::enable_if <detail::is_set_container<ty>::value>::type >
+  {
+    static inline void read(reader& rd, ty& val)
+    {
+      if (rd.expect('[') == false)
+      {
+        rd.error("array must start with [.");
+      }
+      rd.next();
+      auto tok = &rd.peek();
+      while (tok->str.str[0] != ']')
+      {
+        typename ty::value_type ele;
+        json_impl<typename ty::value_type>::read(rd, ele);
+        val.emplace(std::move(ele));
+        tok = &rd.peek();
+        if (tok->str.str[0] == ',')
+        {
+          rd.next();
+          tok = &rd.peek();
+          continue;
+        }
+        else if (tok->str.str[0] == ']')
+        {
+          break;
+        }
+        else
+        {
+          rd.error("no valid array!");
+        }
+      }
+      rd.next();
+      return;
+    }
+    template<typename write_ty>
+    static inline void write(write_ty& wt, ty const& val)
+    {
+      wt.put('[');
+      auto sz = val.size();
+      for (auto& i : val)
+      {
+        json_impl<typename ty::value_type>::write(wt, i);
+        if (sz-- > 1)
+          wt.put(',');
+      }
+      wt.put(']');
+    }
+  };
+
+  template<typename T, typename Enable = void>
+  struct point_maker
+  {
+    using value_type = T;
+  };
+
+  template<typename T>
+  struct point_maker<T*>
+  {
+    using value_type = T;
+
+    static auto make_pointer()
+    {
+      return new value_type();
+    }
+  };
+
+  template<typename T>
+  struct point_maker<T,
+    typename std::enable_if_t<detail::is_template_instant_of<std::shared_ptr, T>::value>>
+  {
+    using value_type = typename T::element_type;
+
+    static auto make_pointer()
+    {
+      return std::make_shared<value_type>();
+    }
+  };
+
+  template<typename T>
+  struct point_maker<T,
+    typename std::enable_if_t<detail::is_template_instant_of<std::unique_ptr, T>::value>>
+  {
+    using value_type = typename T::element_type;
+
+    static auto make_pointer()
+    {
+      return std::make_unique<value_type>();
+    }
+  };
+
+  template<typename ty>
+  struct json_impl<ty,
+    typename std::enable_if <detail::is_ptr<ty>::value>::type >
+  {
+    using value_type = typename point_maker<ty>::value_type;
+
+    static inline void read(reader& rd, ty& val)
+    {
+      val = point_maker<ty>::make_pointer();
+      json_impl<value_type>::read(rd, *val);
+    }
+
+    template<typename write_ty>
+    static inline void write(write_ty& wt, ty const& val)
+    {
+      if (val) {
+        json_impl<value_type>::write(wt, *val);
+      } else {
+        wt.write_liter("null", 4);
+      }
+    }
+
+    template<typename write_ty>
+    static inline void write_key(write_ty& wt, ty const& val)
+    {
+      json_impl<value_type>::write_key(wt, *val);
+    }
+  };
+
   inline void skip_array(reader& rd);
 
   inline void skip_object(reader& rd);
@@ -1978,9 +2131,7 @@ namespace ajson
         json_impl<head>::read(rd, val);
         return 1;
       }
-      if (sizeof...(args))
-        return read_members(rd, member_ptr, member, pos + 1, args_...);
-      return 0;
+      return read_members(rd, member_ptr, member, pos + 1, args_...);
     }
   };
 
@@ -2060,10 +2211,29 @@ namespace ajson
 
   template<typename write_ty, typename head, typename... args>
   inline void write_members(write_ty& wt, detail::string_ref const * member_ptr,
-    size_t pos, head& h, args& ... args_);
+    size_t pos, head& h, args const& ... args_);
 
   template<typename write_ty>
-  inline void write_members(write_ty&, detail::string_ref *, size_t);
+  inline void write_members(write_ty&, detail::string_ref const*, size_t);
+
+  template<bool>
+  struct next_helper
+  {
+    template<typename write_ty>
+    static inline void write(write_ty&)
+    {
+    }
+  };
+
+  template<>
+  struct next_helper<false>
+  {
+    template<typename write_ty>
+    static inline void write(write_ty& wt)
+    {
+      wt.put(',');
+    }
+  };
 
   template<typename write_ty, typename head, typename... args>
   struct write_members_impl
@@ -2074,17 +2244,14 @@ namespace ajson
       wt.write_str(member_ptr[pos].str, member_ptr[pos].len);
       wt.put(':');
       json_impl<head>::write(wt, val);
-      if (sizeof...(args))
-      {
-        wt.put(',');
-        write_members(wt, member_ptr, pos + 1, args_...);
-      }
+      next_helper<sizeof...(args) == 0>::write(wt);
+      write_members(wt, member_ptr, pos + 1, args_...);
     }
   };
 
   template<typename write_ty, typename head, typename... args>
   inline void write_members(write_ty& wt, detail::string_ref const* member_ptr,
-    size_t pos, head const& h, args& ... args_)
+    size_t pos, head const& h, args const& ... args_)
   {
     return write_members_impl<write_ty, head, args...>::write(wt, member_ptr,
       pos, h, args_...);
@@ -2152,29 +2319,160 @@ namespace ajson\
           rd.error("invalid json document!");\
         } while (true);\
       }\
-    template<typename write_ty>\
-    inline void write_(write_ty& wt) const\
+      template<typename write_ty>\
+      inline void write_(write_ty& wt) const\
+      {\
+        auto& fields = this_field_list();\
+        wt.put('{');\
+        ::ajson::write_members(wt, &fields[0], 0,__VA_ARGS__);\
+        wt.put('}');\
+      }\
+    };\
+    static inline detail::field_list& this_field_list()\
     {\
-      auto& fields = this_field_list();\
-      wt.put('{');\
-      ::ajson::write_members(wt, &fields[0], 0,__VA_ARGS__);\
-      wt.put('}');\
+      static auto fields = detail::split_fields(STRINGFY_LIST(__VA_ARGS__));\
+      return fields;\
+    }\
+    static inline void read(reader& rd, TYPE& v)\
+    {\
+      reinterpret_cast<json_helper &>(v).read_(rd);\
+    }\
+    template<typename write_ty>\
+    static inline void write(write_ty& wt, TYPE const& v)\
+    {\
+      reinterpret_cast<json_helper const &>(v).write_(wt);\
     }\
   };\
-  static inline detail::field_list& this_field_list()\
-  {\
-    static auto fields = detail::split_fields(STRINGFY_LIST(__VA_ARGS__));\
-    return fields;\
-  }\
-  static inline void read(reader& rd, TYPE& v)\
-  {\
-    reinterpret_cast<json_helper &>(v).read_(rd);\
-  }\
-  template<typename write_ty>\
-  static inline void write(write_ty& wt, TYPE const& v)\
-  {\
-    reinterpret_cast<json_helper const &>(v).write_(wt);\
-  }\
-};\
 }
 
+#define AJSON_ALIAS(TYPE, FIELD_NAMES, ...) \
+namespace ajson\
+{\
+  template<>\
+  struct json_impl < TYPE , void >\
+  {\
+    struct json_helper : public TYPE\
+    {\
+      inline void read_(reader& rd)\
+      {\
+        auto& fields = this_field_list();\
+        if (rd.expect('{') == false){ rd.error("read object must start with {!"); }\
+          rd.next();\
+        if (rd.expect('}'))\
+          return;\
+        auto mber = rd.peek();\
+        do\
+        {\
+          if (mber.type != token::t_string){ rd.error("object key must be string"); }\
+            rd.next();\
+          if (rd.expect(':') == false){ rd.error("invalid json document!"); }\
+            rd.next();\
+          if (read_members(rd, &fields[0], mber.str, 0,__VA_ARGS__) == 0)\
+          {\
+            skip(rd);\
+          }\
+          if (rd.expect('}'))\
+          {\
+            rd.next();\
+            return;\
+          }\
+          else if (rd.expect(','))\
+          {\
+            rd.next();\
+            mber = rd.peek();\
+            continue;\
+          }\
+          rd.error("invalid json document!");\
+        } while (true);\
+      }\
+      template<typename write_ty>\
+      inline void write_(write_ty& wt) const\
+      {\
+        auto& fields = this_field_list();\
+        wt.put('{');\
+        ::ajson::write_members(wt, &fields[0], 0,__VA_ARGS__);\
+        wt.put('}');\
+      }\
+    };\
+    static inline detail::field_list& this_field_list()\
+    {\
+      static auto fields = detail::split_fields(FIELD_NAMES);\
+      return fields;\
+    }\
+    static inline void read(reader& rd, TYPE& v)\
+    {\
+      reinterpret_cast<json_helper &>(v).read_(rd);\
+    }\
+    template<typename write_ty>\
+    static inline void write(write_ty& wt, TYPE const& v)\
+    {\
+      reinterpret_cast<json_helper const &>(v).write_(wt);\
+    }\
+  };\
+}
+
+#define AJSON_TEMPLATE(TYPE, TEMPLATE, FIELD_NAMES, ...) \
+namespace ajson\
+{\
+  template<typename TEMPLATE >\
+  struct json_impl < TYPE, void >\
+  {\
+    struct json_helper : public TYPE\
+    {\
+      inline void read_(reader& rd)\
+      {\
+        auto& fields = this_field_list();\
+        if (rd.expect('{') == false){ rd.error("read object must start with {!"); }\
+          rd.next();\
+        if (rd.expect('}'))\
+          return;\
+        auto mber = rd.peek();\
+        do\
+        {\
+          if (mber.type != token::t_string){ rd.error("object key must be string"); }\
+            rd.next();\
+          if (rd.expect(':') == false){ rd.error("invalid json document!"); }\
+            rd.next();\
+          if (read_members(rd, &fields[0], mber.str, 0,__VA_ARGS__) == 0)\
+          {\
+            skip(rd);\
+          }\
+          if (rd.expect('}'))\
+          {\
+            rd.next();\
+            return;\
+          }\
+          else if (rd.expect(','))\
+          {\
+            rd.next();\
+            mber = rd.peek();\
+            continue;\
+          }\
+          rd.error("invalid json document!");\
+        } while (true);\
+      }\
+      template<typename write_ty>\
+      inline void write_(write_ty& wt) const\
+      {\
+        auto& fields = this_field_list();\
+        wt.put('{');\
+        ::ajson::write_members(wt, &fields[0], 0,__VA_ARGS__);\
+        wt.put('}');\
+      }\
+    };\
+    static inline detail::field_list& this_field_list()\
+    {\
+      static auto fields = detail::split_fields(FIELD_NAMES);\
+      return fields;\
+    }\
+    static inline void read(reader& rd, TYPE& v)\
+    {\
+      reinterpret_cast<json_helper &>(v).read_(rd);\
+    }\
+    template<typename write_ty>\
+    static inline void write(write_ty& wt, TYPE const& v)\
+    {\
+      reinterpret_cast<json_helper const &>(v).write_(wt);\
+    }\
+  };\
+}
