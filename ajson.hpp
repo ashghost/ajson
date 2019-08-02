@@ -1395,17 +1395,7 @@ namespace ajson
     static inline void write(write_ty& wt, ty const& val)
     {
       char buffer[64] = { 0 };
-#ifdef _MSC_VER
-      _gcvt_s(buffer, 63 , val, 8);
-#else
-      gcvt(val, 62, buffer);
-#endif // MSVC
-      size_t len = std::strlen(buffer);
-      if (buffer[len - 1] == '.')
-      {
-        buffer[len - 1] = '\0';
-        -- len;
-      }
+      std::snprintf(buffer, sizeof(buffer), "%g", val);
       wt.write_liter(buffer, len);
     }
 
