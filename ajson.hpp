@@ -1699,11 +1699,11 @@ namespace ajson
   inline void array_write(write_ty& wt, const T * val, size_t N)
   {
     wt.put('[');
-    auto sz = val.size();
+    int last = N - 1;
     for (size_t i = 0; i < N; ++i)
     {
       json_impl<T>::write(wt, val[i]);
-      if (sz-- > 1)
+      if (i < last)
         wt.put(',');
     }
     wt.put(']');
