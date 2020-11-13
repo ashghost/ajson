@@ -1361,7 +1361,7 @@ namespace ajson
       {
       case token::t_string:
       {
-        double temp = std::strtold(tok.str.str, nullptr);
+        double temp = std::strtod(tok.str.str, nullptr);
         val = static_cast<ty>(temp);
         break;
       }
@@ -1395,7 +1395,7 @@ namespace ajson
     static inline void write(write_ty& wt, ty const& val)
     {
       char buffer[64] = { 0 };
-      std::snprintf(buffer, sizeof(buffer), "%g", val);
+      auto len = std::snprintf(buffer, sizeof(buffer), "%f", val);
       wt.write_liter(buffer, len);
     }
 
@@ -1978,6 +1978,13 @@ namespace ajson
 
     static inline void read(reader& rd, ty& val)
     {
+      detail::string_ref null;
+      null.str = "null";
+      null.len = 4;
+      if (rd.peek().type == token::t_string && rd.peek().str == null) {
+        rd.next();
+        return;
+      }
       val = point_maker<ty>::make_pointer();
       json_impl<value_type>::read(rd, *val);
     }
