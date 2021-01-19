@@ -2110,6 +2110,68 @@ namespace ajson
     rd.next();
   }
 
+  template <typename... Argv>
+  struct json_impl<std::tuple<Argv...>>
+  {
+    using ty = std::tuple<Argv...>;
+
+    template <size_t I = 0, typename std::enable_if_t<I == sizeof...(Argv), int> = 0>
+    static inline void read_impl(reader &rd, ty &)
+    {
+      skip_array(rd);
+    }
+
+    template <size_t I = 0, typename std::enable_if_t<(I < sizeof...(Argv)), int> = 0>
+    static inline void read_impl(reader &rd, ty &val)
+    {
+      auto tok = &rd.peek();
+      if (tok->str.str[0] == ']')
+      {
+        rd.next();
+        return;
+      }
+      else if (tok->str.str[0] == ',')
+      {
+        rd.next();
+      }
+      json_impl<std::tuple_element_t<I, ty>>::read(rd, std::get<I>(val));
+      read_impl<I + 1>(rd, val);
+    }
+
+    static inline void read(reader &rd, ty &val)
+    {
+      if (rd.expect('[') == false)
+      {
+        rd.error("array must start with [.");
+      }
+      rd.next();
+      read_impl(rd, val);
+      return;
+    }
+
+    template <size_t I = 1, typename write_ty, typename std::enable_if_t<I == sizeof...(Argv), int> = 0>
+    static inline void write_impl(write_ty &, ty const &)
+    {
+    }
+
+    template <size_t I = 1, typename write_ty, typename std::enable_if_t<(I < sizeof...(Argv)), int> = 0>
+    static inline void write_impl(write_ty &wt, ty const &val)
+    {
+      wt.put(',');
+      json_impl<std::tuple_element_t<I, ty>>::write(wt, std::get<I>(val));
+      write_impl<I + 1>(wt, val);
+    }
+
+    template <typename write_ty>
+    static inline void write(write_ty &wt, ty const &val)
+    {
+      wt.put('[');
+      json_impl<std::tuple_element_t<0, ty>>::write(wt, std::get<0>(val));
+      write_impl(wt, val);
+      wt.put(']');
+    }
+  };
+
   template<typename head, typename... args>
   inline int read_members(reader& rd, detail::string_ref const * member_ptr,
     detail::string_ref const& member, size_t pos, head& h, args& ... args_);
