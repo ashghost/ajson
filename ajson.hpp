@@ -87,7 +87,7 @@ namespace ajson
     {
       if (c > ' ' || c <= 0)
         return false;
-      return char_table()[static_cast<unsigned char>(c)] == 17;
+      return char_table()[(size_t)c] == 17;
     }
 
     inline char const * skip_ws(char const * str)
@@ -540,7 +540,7 @@ namespace ajson
     }
   public:
     reader(const char * ptr = nullptr, size_t len = -1)
-      :len_(len),ptr_(ptr)
+      :len_(len), ptr_(ptr)
     {
       if (ptr == nullptr)
       {
@@ -711,11 +711,11 @@ namespace ajson
     char * m_read_ptr;
     char * m_write_ptr;
     char * m_tail_ptr;
-    std::size_t			m_length;
     int							m_status;
+    std::size_t			m_length;
 
     enum{ INIT_BUFF_SIZE = 1024 };
-    ajson_string_stream() :m_length(INIT_BUFF_SIZE), m_status(good)
+    ajson_string_stream() :m_status(good), m_length(INIT_BUFF_SIZE)
     {
       this->m_header_ptr = this->alloc.allocate(INIT_BUFF_SIZE);
       this->m_read_ptr = this->m_header_ptr;
@@ -1339,14 +1339,14 @@ namespace ajson
     static inline void write(write_ty& wt, ty const& val)
     {
       typedef typename std::underlying_type<ty>::type raw_type;
-      json_impl<raw_type>::write(wt, (const raw_type&)val);
+      json_impl<raw_type>::template write(wt, (const raw_type&)val);
     }
 
     template<typename write_ty>
     static inline void write_key(write_ty& wt, ty const& val)
     {
       typedef typename std::underlying_type<ty>::type raw_type;
-      json_impl<raw_type>::write_key(wt, (const raw_type&)val);
+      json_impl<raw_type>::template write_key(wt, (const raw_type&)val);
     }
   };
 
@@ -1412,7 +1412,7 @@ namespace ajson
   {
     if (v>=0 && v <= 'f')
     {
-      v = detail::char_table()[static_cast<unsigned char>(v)];
+      v = detail::char_table()[(size_t)v];
     }
     else
     {
@@ -1702,7 +1702,7 @@ namespace ajson
     int last = N - 1;
     for (size_t i = 0; i < N; ++i)
     {
-      json_impl<T>::write(wt, val[i]);
+      json_impl<T>::template write(wt, val[i]);
       if (i < last)
         wt.put(',');
     }
@@ -1810,7 +1810,7 @@ namespace ajson
       auto sz = val.size();
       for (auto& i : val)
       {
-        json_impl<typename ty::value_type>::write(wt, i);
+        json_impl<typename ty::value_type>::template write(wt, i);
         if (sz-- > 1)
           wt.put(',');
       }
@@ -1868,9 +1868,9 @@ namespace ajson
       auto sz = val.size();
       for (auto& i : val)
       {
-        json_impl<typename ty::key_type>::write_key(wt, i.first);
+        json_impl<typename ty::key_type>::template write_key(wt, i.first);
         wt.put(':');
-        json_impl<typename ty::mapped_type>::write(wt, i.second);
+        json_impl<typename ty::mapped_type>::template write(wt, i.second);
         if (sz-- > 1)
           wt.put(',');
       }
@@ -1921,7 +1921,7 @@ namespace ajson
       auto sz = val.size();
       for (auto& i : val)
       {
-        json_impl<typename ty::value_type>::write(wt, i);
+        json_impl<typename ty::value_type>::template write(wt, i);
         if (sz-- > 1)
           wt.put(',');
       }
@@ -1993,7 +1993,7 @@ namespace ajson
     static inline void write(write_ty& wt, ty const& val)
     {
       if (val) {
-        json_impl<value_type>::write(wt, *val);
+        json_impl<value_type>::template write(wt, *val);
       } else {
         wt.write_liter("null", 4);
       }
@@ -2158,7 +2158,7 @@ namespace ajson
     static inline void write_impl(write_ty &wt, ty const &val)
     {
       wt.put(',');
-      json_impl<std::tuple_element_t<I, ty>>::write(wt, std::get<I>(val));
+      json_impl<std::tuple_element_t<I, ty>>::template write(wt, std::get<I>(val));
       write_impl<I + 1>(wt, val);
     }
 
@@ -2166,7 +2166,7 @@ namespace ajson
     static inline void write(write_ty &wt, ty const &val)
     {
       wt.put('[');
-      json_impl<std::tuple_element_t<0, ty>>::write(wt, std::get<0>(val));
+      json_impl<std::tuple_element_t<0, ty>>::template write(wt, std::get<0>(val));
       write_impl(wt, val);
       wt.put(']');
     }
@@ -2257,7 +2257,8 @@ namespace ajson
     buffer[sz] = 0;
     if (sz >= 3)
     {
-      if (buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF)
+      auto ubuffer = reinterpret_cast<unsigned char*>(buffer);
+      if (ubuffer[0] == 0xEFU && ubuffer[1] == 0xBBU && ubuffer[2] == 0xBFU)
       {
         buffer += 3;
         sz -= 3;
@@ -2302,8 +2303,8 @@ namespace ajson
     {
       wt.write_str(member_ptr[pos].str, member_ptr[pos].len);
       wt.put(':');
-      json_impl<head>::write(wt, val);
-      next_helper<sizeof...(args) == 0>::write(wt);
+      json_impl<head>::template write(wt, val);
+      next_helper<sizeof...(args) == 0>::template write(wt);
       write_members(wt, member_ptr, pos + 1, args_...);
     }
   };
@@ -2327,14 +2328,14 @@ namespace ajson
   {
     typedef typename std::remove_cv<ty>::type rty;
     write_tp wt(ss);
-    json_impl<rty>::write(wt, val);
+    json_impl<rty>::template write(wt, val);
   }
 
   template<typename ty, typename stream_ty = ajson_file_stream, class write_tp = lite_write<stream_ty> >
   inline void save_to_file(ty& val, char const * filename)
   {
     stream_ty fs(filename);
-    save_to < ty, stream_ty, write_tp>(fs, val);
+    save_to<ty, stream_ty, write_tp>(fs, val);
   }
 }
 
